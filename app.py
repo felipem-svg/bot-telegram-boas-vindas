@@ -33,7 +33,7 @@ LINK_CADASTRO = (
 LINK_COMUNIDADE_FINAL = "https://t.me/+rtq84bGVBhQyZmJh"
 
 # Arquivos
-AUDIO_INICIAL = "audio i.mp3"
+AUDIO_INICIAL = "Audio i.mp3"
 IMG_INICIAL = "presente_do_jota.jpg"
 IMG_FINAL = "presente_do_jota_2.jpg"
 
