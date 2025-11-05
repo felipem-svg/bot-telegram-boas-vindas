@@ -1,5 +1,6 @@
 import os
 import io
+import asyncio
 import logging
 from dotenv import load_dotenv
 from PIL import Image
@@ -10,6 +11,7 @@ from telegram.ext import (
     CallbackQueryHandler,
     ContextTypes,
 )
+from telegram.error import BadRequest, TelegramError
 
 # ========= LOGGING =========
 logging.basicConfig(
@@ -32,13 +34,20 @@ LINK_CADASTRO = (
 )
 LINK_COMUNIDADE_FINAL = "https://t.me/+rtq84bGVBhQyZmJh"
 
-# Arquivos
-AUDIO_INICIAL = "Audio i.mp3"
+# Arquivos (devem estar na MESMA pasta do app.py)
+AUDIO_INICIAL = "i.mp3"
 IMG_INICIAL = "presente_do_jota.jpg"
 IMG_FINAL = "presente_do_jota_2.jpg"
 
 # Callback data
 CB_CONFIRM_SIM = "confirm_sim"
+
+# Espera (2 minutos em produção; use /test10 p/ testar em 10s)
+WAIT_SECONDS = 120
+
+# Controle simples para evitar duplicidade entre job e fallback
+PENDING_FOLLOWUPS: set[int] = set()  # chat_ids com follow-up pendente
+
 
 # ========= Botões =========
 def btn_criar_conta() -> InlineKeyboardMarkup:
@@ -54,7 +63,8 @@ def btn_acessar_comunidade() -> InlineKeyboardMarkup:
         [[InlineKeyboardButton("🚀 Acessar comunidade", url=LINK_COMUNIDADE_FINAL)]]
     )
 
-# ========= Util: enviar imagem com Pillow (converte p/ JPEG) =========
+
+# ========= Util: enviar imagem (converte p/ JPEG com Pillow) =========
 async def send_image(
     context: ContextTypes.DEFAULT_TYPE,
     chat_id: int,
@@ -89,9 +99,30 @@ async def send_image(
                 chat_id=chat_id, text=caption, parse_mode=parse_mode, reply_markup=reply_markup
             )
 
-# ========= /ping (teste) =========
+
+# ========= Comandos de teste =========
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="pong ✅")
+
+async def jobs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Tenta listar jobs do JobQueue (pode não existir em algumas versões)
+    try:
+        jq = context.application.job_queue
+        all_jobs = getattr(jq, "jobs", lambda: [])()
+        if all_jobs:
+            lines = [f"- {getattr(j, 'name', '?')} (next: {getattr(j, 'next_t', None)})" for j in all_jobs]
+            msg = "Jobs ativos:\n" + "\n".join(lines)
+        else:
+            msg = "(nenhum job ativo)"
+    except Exception:
+        msg = f"(jobs pendentes em memória): {len(PENDING_FOLLOWUPS)}"
+    await context.bot.send_message(chat_id=update.effective_chat.id, text=msg)
+
+async def test10(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    schedule_followup(context, chat_id, wait_seconds=10)
+    await context.bot.send_message(chat_id=chat_id, text="⏱️ Follow-up de TESTE agendado para 10s.")
+
 
 # ========= /start =========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -116,8 +147,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         log.warning("Falha ao enviar áudio inicial (%s).", e)
 
-    # 2) Imagem + CTA "Presente do jota aguardando…"
-    caption_inicial = "🎁 *Presente do Jota aguardando…*\n\nClique no botão abaixo para abrir sua conta e garantir seu presente de membros novos."
+    # 2) Imagem + CTA "Presente do Jota aguardando…"
+    caption_inicial = "🎁 *Presente do Jota aguardando…*\n\nClique no botão abaixo."
     await send_image(
         context=context,
         chat_id=chat_id,
@@ -126,23 +157,57 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=btn_criar_conta(),
     )
 
-    # 3) Agenda +2min a pergunta "Eae, já conseguiu finalizar...?"
-    #    Guardamos o chat_id na job para responder no mesmo chat
-    context.job_queue.run_once(
-        send_followup_question,
-        when=120,  # 2 minutos
-        data={"chat_id": chat_id},
-        name=f"followup-{chat_id}",
-    )
-    log.info("Follow-up agendado para +120s ao chat_id=%s", chat_id)
+    # 3) Agenda follow-up em WAIT_SECONDS
+    schedule_followup(context, chat_id, wait_seconds=WAIT_SECONDS)
 
-# ========= Job: pergunta após 2 min =========
-async def send_followup_question(context: ContextTypes.DEFAULT_TYPE):
+
+def schedule_followup(context: ContextTypes.DEFAULT_TYPE, chat_id: int, wait_seconds: int = WAIT_SECONDS):
+    """Agenda o follow-up pelo JobQueue + fallback com asyncio para garantir disparo."""
+    if chat_id in PENDING_FOLLOWUPS:
+        log.info("Follow-up já pendente para chat_id=%s; ignorando novo agendamento.", chat_id)
+        return
+
+    PENDING_FOLLOWUPS.add(chat_id)
+
+    # JobQueue correto: context.application.job_queue
+    job_name = f"followup-{chat_id}"
+    context.application.job_queue.run_once(
+        send_followup_question_job,
+        when=wait_seconds,
+        data={"chat_id": chat_id},
+        name=job_name,
+    )
+    log.info("Follow-up (%ss) agendado via JobQueue: %s", wait_seconds, job_name)
+
+    # Fallback asyncio (caso o job não rode por algum motivo)
+    async def fallback_task():
+        try:
+            await asyncio.sleep(wait_seconds + 5)  # 5s de margem
+            if chat_id in PENDING_FOLLOWUPS:
+                log.warning("Fallback asyncio disparou follow-up para chat_id=%s", chat_id)
+                await send_followup_message(context, chat_id)
+                PENDING_FOLLOWUPS.discard(chat_id)
+        except Exception as e:
+            log.exception("Erro no fallback asyncio: %s", e)
+
+    context.application.create_task(fallback_task())
+
+
+# ========= Job: pergunta após WAIT_SECONDS =========
+async def send_followup_question_job(context: ContextTypes.DEFAULT_TYPE):
     job = context.job
     chat_id = job.data["chat_id"]
+    log.info("JobQueue disparou follow-up para chat_id=%s", chat_id)
+    if chat_id in PENDING_FOLLOWUPS:
+        await send_followup_message(context, chat_id)
+        PENDING_FOLLOWUPS.discard(chat_id)
+
+
+async def send_followup_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
     text = "Eae, já conseguiu finalizar a criação da sua conta?"
     await context.bot.send_message(chat_id=chat_id, text=text, reply_markup=btn_sim())
     log.info("Follow-up enviado ao chat_id=%s", chat_id)
+
 
 # ========= Clique no SIM =========
 async def confirm_sim(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -157,7 +222,6 @@ async def confirm_sim(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "e fica de olho que o resultado sai na live de *HOJE*."
     )
 
-    # Envia imagem final + texto
     await send_image(
         context=context,
         chat_id=chat_id,
@@ -166,13 +230,23 @@ async def confirm_sim(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=btn_acessar_comunidade(),
     )
 
+
+# ========= Error handler (remove o aviso 'No error handlers are registered') =========
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
+    log.exception("Unhandled error: %s | update=%s", context.error, update)
+
+
 # ========= MAIN =========
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("ping", ping))
+    app.add_handler(CommandHandler("jobs", jobs))
+    app.add_handler(CommandHandler("test10", test10))  # follow-up em 10s para testes
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(confirm_sim, pattern=f"^{CB_CONFIRM_SIM}$"))
+
+    app.add_error_handler(on_error)
 
     log.info("🤖 Bot rodando (polling). Certifique-se que não há webhook ativo e só 1 instância.")
     app.run_polling()
