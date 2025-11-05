@@ -22,6 +22,7 @@ if not TOKEN:
 
 LINK_CADASTRO = "https://betboom.bet.br/registration/base/?utm_source=inf&utm_medium=bloggers&utm_campaign=309&utm_content=regcasino_br&utm_term=6064&aff=alanbase&qtag=a6064_t309_c147_s019a5553-fabe-7180-b1d2-8c55097d2b32_"
 LINK_COMUNIDADE = "https://t.me/+4J5FfgfOm9U3ZDlh"
+
 PHOTO_NAME = "presente_do_jota.jpg"
 AUDIO_NAME = "Audio.mp3"
 
@@ -43,7 +44,7 @@ def options_markup():
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="pong ✅")
 
-# === FUNIL PRINCIPAL ===
+# === FLUXO PRINCIPAL ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat_id = update.effective_chat.id if update.effective_chat else None
@@ -57,7 +58,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_path = os.path.join(os.path.dirname(__file__), PHOTO_NAME)
     try:
         if os.path.exists(photo_path) and os.path.getsize(photo_path) > 0:
-            # Converte qualquer formato em JPEG
             with Image.open(photo_path) as im:
                 im = im.convert("RGB")
                 buf = io.BytesIO()
@@ -70,7 +70,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown",
                 reply_markup=cta_markup(),
             )
-            log.info("Sent converted JPG + CTA.")
+            log.info("Imagem enviada + CTA.")
         else:
             raise FileNotFoundError("Imagem ausente ou vazia.")
     except Exception as e:
@@ -82,53 +82,52 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=cta_markup(),
         )
 
+# === ABRIR CAIXA (ÁUDIO + OPÇÕES) ===
 async def abrir_caixa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     user = query.from_user
     log.info("CLICK abrir_caixa by user_id=%s username=%s", user.id, user.username)
 
-    # 1) Tenta enviar o áudio primeiro
+    # 0) Remove o teclado para evitar clique duplo
+    try:
+        await query.edit_message_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+
+    # 1) Envia o áudio primeiro
     try:
         audio_path = os.path.join(os.path.dirname(__file__), AUDIO_NAME)
-        if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
-            await context.bot.send_audio(
-                chat_id=query.message.chat_id,
-                audio=InputFile(audio_path),
-                # title e caption são opcionais – ajuste como quiser:
-                title="Mensagem do Jota",
-                caption="🔊 Ouça essa mensagem rápida antes de continuar",
-            )
-            log.info("Audio enviado com sucesso: %s", AUDIO_NAME)
-        else:
-            log.warning("Áudio ausente ou vazio: %s", audio_path)
-    except Exception as e:
-        log.warning("Falha ao enviar áudio (%s). Seguindo sem áudio.", e)
+        size = os.path.getsize(audio_path) if os.path.exists(audio_path) else 0
+        log.info("Tentando enviar áudio: %s (%s bytes)", audio_path, size)
 
-    # 2) Depois mostra as opções
+        if os.path.exists(audio_path) and size > 0:
+            with open(audio_path, "rb") as f:
+                await context.bot.send_audio(
+                    chat_id=query.message.chat_id,
+                    audio=InputFile(f, filename="Audio.mp3"),
+                    title="Mensagem do Jota",
+                    caption="🔊 Ouça essa mensagem rápida antes de continuar",
+                )
+            log.info("Áudio enviado com sucesso.")
+        else:
+            log.warning("Arquivo de áudio ausente ou vazio.")
+    except Exception as e:
+        log.warning("Falha ao enviar áudio (%s).", e)
+
+    # 2) Depois envia a mensagem com botões
     text = (
         "🎁 *Presente Liberado!*\n\n"
         "Você acaba de desbloquear **acesso antecipado** à nossa comunidade VIP 💥\n\n"
         "Lá dentro rolam conteúdos exclusivos, bônus especiais e avisos de lives 🔥\n\n"
         "Escolha uma das opções abaixo para continuar:"
     )
-
-    try:
-        # se a mensagem original era foto c/ legenda, tenta editar:
-        await query.edit_message_caption(
-            caption=text, parse_mode="Markdown", reply_markup=options_markup()
-        )
-        log.info("Edited message with options.")
-    except BadRequest:
-        # se era texto ou não dá pra editar, manda uma nova:
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text=text,
-            parse_mode="Markdown",
-            reply_markup=options_markup(),
-        )
-        log.info("Sent new message with options (fallback).")
-
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text=text,
+        parse_mode="Markdown",
+        reply_markup=options_markup(),
+    )
 
 # === MAIN ===
 def main():
@@ -137,7 +136,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(abrir_caixa, pattern="abrir_caixa"))
 
-    log.info("🤖 Bot rodando (polling). Certifique-se que não há webhook ativo e só 1 instância.")
+    log.info("🤖 Bot rodando (polling). Certifique-se de que não há webhook ativo e só 1 instância.")
     app.run_polling()
 
 if __name__ == "__main__":
