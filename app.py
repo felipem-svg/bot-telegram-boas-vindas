@@ -87,6 +87,24 @@ async def abrir_caixa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = query.from_user
     log.info("CLICK abrir_caixa by user_id=%s username=%s", user.id, user.username)
 
+    # 1) Tenta enviar o áudio primeiro
+    try:
+        audio_path = os.path.join(os.path.dirname(__file__), AUDIO_NAME)
+        if os.path.exists(audio_path) and os.path.getsize(audio_path) > 0:
+            await context.bot.send_audio(
+                chat_id=query.message.chat_id,
+                audio=InputFile(audio_path),
+                # title e caption são opcionais – ajuste como quiser:
+                title="Mensagem do Jota",
+                caption="🔊 Ouça essa mensagem rápida antes de continuar",
+            )
+            log.info("Audio enviado com sucesso: %s", AUDIO_NAME)
+        else:
+            log.warning("Áudio ausente ou vazio: %s", audio_path)
+    except Exception as e:
+        log.warning("Falha ao enviar áudio (%s). Seguindo sem áudio.", e)
+
+    # 2) Depois mostra as opções
     text = (
         "🎁 *Presente Liberado!*\n\n"
         "Você acaba de desbloquear **acesso antecipado** à nossa comunidade VIP 💥\n\n"
@@ -95,11 +113,13 @@ async def abrir_caixa(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     try:
+        # se a mensagem original era foto c/ legenda, tenta editar:
         await query.edit_message_caption(
             caption=text, parse_mode="Markdown", reply_markup=options_markup()
         )
         log.info("Edited message with options.")
     except BadRequest:
+        # se era texto ou não dá pra editar, manda uma nova:
         await context.bot.send_message(
             chat_id=query.message.chat_id,
             text=text,
@@ -107,6 +127,7 @@ async def abrir_caixa(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=options_markup(),
         )
         log.info("Sent new message with options (fallback).")
+
 
 # === MAIN ===
 def main():
