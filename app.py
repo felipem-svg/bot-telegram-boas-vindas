@@ -117,7 +117,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         log.warning("Falha ao enviar áudio inicial (%s).", e)
 
     # 2) Imagem + CTA "Presente do jota aguardando…"
-    caption_inicial = "🎁 *Presente do Jota aguardando…*\n\nClique no botão abaixo."
+    caption_inicial = "🎁 *Presente do Jota aguardando…*\n\nClique no botão abaixo para abrir sua conta e garantir seu presente de membros novos."
     await send_image(
         context=context,
         chat_id=chat_id,
