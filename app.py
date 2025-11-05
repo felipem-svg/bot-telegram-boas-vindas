@@ -23,6 +23,7 @@ if not TOKEN:
 LINK_CADASTRO = "https://betboom.bet.br/registration/base/?utm_source=inf&utm_medium=bloggers&utm_campaign=309&utm_content=regcasino_br&utm_term=6064&aff=alanbase&qtag=a6064_t309_c147_s019a5553-fabe-7180-b1d2-8c55097d2b32_"
 LINK_COMUNIDADE = "https://t.me/+4J5FfgfOm9U3ZDlh"
 PHOTO_NAME = "presente_do_jota.jpg"
+AUDIO_NAME = "Audio.mp3"
 
 # === BOTÕES ===
 def cta_markup():
