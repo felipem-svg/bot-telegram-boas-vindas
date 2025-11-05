@@ -1,6 +1,8 @@
 import os
+import io
 import logging
 from dotenv import load_dotenv
+from PIL import Image
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from telegram.error import BadRequest, TelegramError
@@ -36,11 +38,11 @@ def options_markup():
         ]
     )
 
-# === COMANDOS DE TESTE ===
+# === COMANDO TESTE ===
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="pong ✅")
 
-# === FLUXO PRINCIPAL ===
+# === FUNIL PRINCIPAL ===
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     chat_id = update.effective_chat.id if update.effective_chat else None
@@ -54,18 +56,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     photo_path = os.path.join(os.path.dirname(__file__), PHOTO_NAME)
     try:
         if os.path.exists(photo_path) and os.path.getsize(photo_path) > 0:
+            # Converte qualquer formato em JPEG
+            with Image.open(photo_path) as im:
+                im = im.convert("RGB")
+                buf = io.BytesIO()
+                im.save(buf, format="JPEG", quality=90, optimize=True)
+                buf.seek(0)
             await context.bot.send_photo(
                 chat_id=chat_id,
-                photo=InputFile(photo_path),
+                photo=buf,
                 caption=caption,
                 parse_mode="Markdown",
                 reply_markup=cta_markup(),
             )
-            log.info("Sent photo + CTA.")
+            log.info("Sent converted JPG + CTA.")
         else:
             raise FileNotFoundError("Imagem ausente ou vazia.")
-    except (BadRequest, TelegramError, FileNotFoundError) as e:
-        log.warning("Foto indisponível (%s). Enviando texto.", e)
+    except Exception as e:
+        log.warning("Falha ao enviar imagem (%s). Enviando texto.", e)
         await context.bot.send_message(
             chat_id=chat_id,
             text=caption,
@@ -107,7 +115,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(abrir_caixa, pattern="abrir_caixa"))
 
-    log.info("🤖 Bot rodando (polling). Certifique-se de que não há webhook ativo e só 1 instância.")
+    log.info("🤖 Bot rodando (polling). Certifique-se que não há webhook ativo e só 1 instância.")
     app.run_polling()
 
 if __name__ == "__main__":
