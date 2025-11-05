@@ -39,9 +39,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log.info("START from user_id=%s username=%s chat_id=%s", getattr(user, "id", None), getattr(user, "username", None), chat_id)
 
     caption = (
-        "🎁 *Presente do Jota!*
-
-"
+        "🎁 *Presente do Jota!*"
         "Clique no botão abaixo para abrir sua caixa e ver o que te espera."
     )
 
