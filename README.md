@@ -1,26 +1,25 @@
-# Bot Telegram – Presente do Jota (versão segura)
+# Bot Telegram – Presente do Jota (versão final)
 
-Este bot entrega um funil de boas-vindas no estilo “abrir caixa”,
-com botões interativos e direcionamento para uma comunidade Telegram.
+Funil de boas-vindas com imagem, botões e links de redirecionamento.
 
-## 🚀 Como usar
-
-1. Copie `.env.example` para `.env` e insira seu token do @BotFather.
-2. Crie ambiente virtual e instale dependências:
+## 🚀 Como rodar localmente
+1. Copie `.env.example` para `.env` e adicione o seu TOKEN do @BotFather.
+2. Instale dependências:
    ```bash
    python -m venv venv
    source venv/bin/activate
    pip install -r requirements.txt
    ```
-3. Execute o bot:
+3. Execute:
    ```bash
    python app.py
    ```
 
-## ⚙️ Funcionalidades
-- Envia imagem inicial (“Presente do Jota”)
-- Botão “Abrir minha caixa” inicia o fluxo
-- Direciona o usuário para:
-  - Criar conta (link configurado)
-  - Entrar na comunidade Telegram
-- Log básico de eventos
+## ☁️ Railway (24/7)
+1. Faça upload deste projeto no GitHub.
+2. Conecte o repo ao Railway.
+3. Nas variáveis de ambiente, adicione:
+   ```
+   TELEGRAM_TOKEN=seu_token_aqui
+   ```
+4. Deploy automático. Logs mostrarão “🤖 Bot rodando (polling)”.
