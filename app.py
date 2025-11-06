@@ -27,7 +27,7 @@ LINK_CADASTRO = (
 LINK_COMUNIDADE_FINAL = "https://t.me/+rtq84bGVBhQyZmJh"
 
 # Mídias
-AUDIO_INICIAL = "Audio i.mp3"  # local opcional
+AUDIO_INICIAL = "Audio.mp3"  # local opcional
 AUDIO_ID_ENV  = os.getenv("FILE_ID_AUDIO")               # opcional: usar direto file_id do Telegram
 IMG1_URL      = "https://i.postimg.cc/wxkkz20M/presente-do-jota.jpg"
 IMG2_URL      = "https://i.postimg.cc/8kbbG4tT/presente-do-jota-2.png"
@@ -168,13 +168,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log.info("START user_id=%s username=%s chat_id=%s", user.id, user.username, chat_id)
 
     # feedback imediato
-    await _retry_send(lambda: context.bot.send_message(chat_id=chat_id, text="⏳ preparando seu presente…"))
+    await _retry_send(lambda: context.bot.send_message(chat_id=chat_id, text="⏳ Preparando seu presente…"))
 
     # 1) áudio
     await send_audio_fast(context, chat_id, file_id_env=AUDIO_ID_ENV, file_id_key="audio", local_path=AUDIO_INICIAL, caption="🔊 Mensagem rápida antes de continuar")
 
     # 2) imagem + CTA (URL → cache file_id)
-    caption = "🎁 *Presente do Jota aguardando…*\n\nClique no botão abaixo."
+    caption = "🎁 *Presente do Jota aguardando…*\n\nClique no botão abaixo para abrir sua conta e garantir seu presente de membros novos."
     await send_photo_from_url(context, chat_id, file_id_env=IMG1_ID_ENV, file_id_key="img1", url=IMG1_URL, caption=caption, reply_markup=btn_criar_conta())
 
     # 3) follow-up em 2 min
