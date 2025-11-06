@@ -27,7 +27,7 @@ LINK_CADASTRO = (
 LINK_COMUNIDADE_FINAL = "https://t.me/+rtq84bGVBhQyZmJh"
 
 # Mídias
-AUDIO_INICIAL = "i.mp3"  # local opcional
+AUDIO_INICIAL = "Audio i.mp3"  # local opcional
 AUDIO_ID_ENV  = os.getenv("FILE_ID_AUDIO")               # opcional: usar direto file_id do Telegram
 IMG1_URL      = "https://i.postimg.cc/wxkkz20M/presente-do-jota.jpg"
 IMG2_URL      = "https://i.postimg.cc/8kbbG4tT/presente-do-jota-2.png"
