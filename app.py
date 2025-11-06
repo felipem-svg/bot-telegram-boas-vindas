@@ -18,7 +18,7 @@ TOKEN = os.getenv("TELEGRAM_TOKEN") or ""
 if not TOKEN:
     raise RuntimeError("❌ Defina TELEGRAM_TOKEN no .env ou nas Variables do Railway")
 
-# Links destino
+# Links de destino
 LINK_CADASTRO = (
     "https://betboom.bet.br/registration/base/?utm_source=inf&utm_medium=bloggers"
     "&utm_campaign=309&utm_content=regcasino_br&utm_term=6064&aff=alanbase&"
@@ -27,18 +27,17 @@ LINK_CADASTRO = (
 LINK_COMUNIDADE_FINAL = "https://t.me/+rtq84bGVBhQyZmJh"
 
 # Mídias
-# Imagens por URL (Telegram baixa direto); na 1ª vez salvamos o file_id para ficar instantâneo
 IMG1_URL    = "https://i.postimg.cc/wxkkz20M/presente-do-jota.jpg"
 IMG2_URL    = "https://i.postimg.cc/8kbbG4tT/presente-do-jota-2.png"
-IMG1_ID_ENV = os.getenv("FILE_ID_IMG_INICIAL")   # opcional
-IMG2_ID_ENV = os.getenv("FILE_ID_IMG_FINAL")     # opcional
+IMG1_ID_ENV = os.getenv("FILE_ID_IMG_INICIAL")  # opcional
+IMG2_ID_ENV = os.getenv("FILE_ID_IMG_FINAL")    # opcional
 
-# Áudio: 4 rotas (ENV file_id → cache → ENV URL → local)
-AUDIO_FILE_LOCAL = "Audio.mp3"                   # certifique-se do nome exato (case-sensitive)
-AUDIO_ID_ENV     = os.getenv("FILE_ID_AUDIO")    # opcional (recomendado)
-AUDIO_URL_ENV    = os.getenv("AUDIO_URL")        # opcional (link direto .mp3/.m4a)
+# Áudio: prioriza FILE_ID via ENV (opção 2), com fallback para cache/URL/local
+AUDIO_ID_ENV     = os.getenv("FILE_ID_AUDIO")   # ✅ use isso (já adicionado nas Variables)
+AUDIO_URL_ENV    = os.getenv("AUDIO_URL")       # opcional
+AUDIO_FILE_LOCAL = "Audio.mp3"                  # fallback final
 
-# Cache JSON para file_id
+# Cache JSON de file_ids (para imagens/áudio se precisar)
 CACHE_PATH = os.path.join(os.path.dirname(__file__), "file_ids.json")
 def load_cache():
     try:
@@ -77,25 +76,20 @@ async def _retry_send(coro_factory, max_attempts=2):
         except RetryAfter as e:
             wait = getattr(e, "retry_after", 1)
             log.warning("RetryAfter: aguardando %ss ...", wait)
-            await asyncio.sleep(wait)
-            last = e
+            await asyncio.sleep(wait); last = e
         except TimedOut:
             log.warning("TimedOut: tentando novamente ...")
             await asyncio.sleep(1)
         except Exception as e:
-            last = e
-            break
-    if last:
-        raise last
+            last = e; break
+    if last: raise last
 
-# ====== FOTO por URL: ENV → cache → URL ======
+# ====== FOTO por URL: ENV file_id → cache → URL ======
 async def send_photo_from_url(context: ContextTypes.DEFAULT_TYPE, chat_id: int, *, file_id_env: str|None, file_id_key: str, url: str, caption: str|None=None, reply_markup=None):
     try:
-        # 1) ENV file_id
         if file_id_env:
             log.info("Foto via file_id ENV (%s)...", file_id_key)
             return await _retry_send(lambda: context.bot.send_photo(chat_id=chat_id, photo=file_id_env, caption=caption, parse_mode="Markdown", reply_markup=reply_markup))
-        # 2) CACHE file_id
         fid = FILE_IDS.get(file_id_key)
         if fid:
             log.info("Foto via file_id cache (%s)...", file_id_key)
@@ -104,26 +98,20 @@ async def send_photo_from_url(context: ContextTypes.DEFAULT_TYPE, chat_id: int, 
             except Exception:
                 log.warning("file_id cache %s falhou, removendo e usando URL ...", file_id_key)
                 FILE_IDS.pop(file_id_key, None); save_cache(FILE_IDS)
-        # 3) URL (Telegram baixa direto)
         log.info("Foto via URL (%s) ...", file_id_key)
         msg = await _retry_send(lambda: context.bot.send_photo(chat_id=chat_id, photo=url, caption=caption, parse_mode="Markdown", reply_markup=reply_markup))
         if msg and msg.photo:
             new_id = msg.photo[-1].file_id
-            FILE_IDS[file_id_key] = new_id
-            save_cache(FILE_IDS)
+            FILE_IDS[file_id_key] = new_id; save_cache(FILE_IDS)
             log.info("Cacheado file_id %s: %s", file_id_key, new_id)
         return msg
     except Exception as e:
         log.warning("Falha geral ao enviar foto (%s). Enviando texto como fallback.", e)
         if caption:
-            try:
-                return await _retry_send(lambda: context.bot.send_message(chat_id=chat_id, text=caption, parse_mode="Markdown", reply_markup=reply_markup))
-            except Exception as e2:
-                log.warning("Falha até no fallback de texto: %s", e2)
+            return await _retry_send(lambda: context.bot.send_message(chat_id=chat_id, text=caption, parse_mode="Markdown", reply_markup=reply_markup))
 
-# ====== ÁUDIO: ENV (file_id) → cache (file_id) → ENV URL → LOCAL (com reopen por tentativa) ======
+# ====== ÁUDIO: ENV (file_id) → cache (file_id) → ENV URL → local (reabrindo arquivo) ======
 async def send_audio_fast(context: ContextTypes.DEFAULT_TYPE, chat_id: int, *, caption: str|None=None):
-    # 1) ENV file_id
     if AUDIO_ID_ENV:
         log.info("Áudio via file_id ENV ...")
         try:
@@ -131,7 +119,6 @@ async def send_audio_fast(context: ContextTypes.DEFAULT_TYPE, chat_id: int, *, c
         except Exception as e:
             log.warning("file_id ENV (audio) falhou: %s", e)
 
-    # 2) CACHE file_id
     fid = FILE_IDS.get("audio")
     if fid:
         log.info("Áudio via file_id cache ...")
@@ -141,20 +128,17 @@ async def send_audio_fast(context: ContextTypes.DEFAULT_TYPE, chat_id: int, *, c
             log.warning("file_id cache (audio) falhou, limpando: %s", e)
             FILE_IDS.pop("audio", None); save_cache(FILE_IDS)
 
-    # 3) ENV URL
-    if (url := os.getenv("AUDIO_URL")):
+    if AUDIO_URL_ENV:
         log.info("Áudio via URL ...")
         try:
-            msg = await _retry_send(lambda: context.bot.send_audio(chat_id=chat_id, audio=url, caption=caption))
+            msg = await _retry_send(lambda: context.bot.send_audio(chat_id=chat_id, audio=AUDIO_URL_ENV, caption=caption))
             if msg and msg.audio and msg.audio.file_id:
-                FILE_IDS["audio"] = msg.audio.file_id
-                save_cache(FILE_IDS)
+                FILE_IDS["audio"] = msg.audio.file_id; save_cache(FILE_IDS)
                 log.info("Cacheado file_id audio: %s", msg.audio.file_id)
             return msg
         except Exception as e:
             log.warning("Envio de áudio por URL falhou: %s", e)
 
-    # 4) LOCAL — reabrindo o arquivo a cada tentativa
     full = os.path.join(os.path.dirname(__file__), AUDIO_FILE_LOCAL)
     size = os.path.getsize(full) if os.path.exists(full) else 0
     log.info("Checando áudio local: path=%s size=%s bytes", full, size)
@@ -164,35 +148,26 @@ async def send_audio_fast(context: ContextTypes.DEFAULT_TYPE, chat_id: int, *, c
         return
 
     last_exc = None
-    for attempt in range(2):  # mesmo número de tentativas do _retry_send
+    for _ in range(2):
         try:
-            with open(full, "rb") as f:  # <-- reabre a cada tentativa
-                msg = await context.bot.send_audio(
-                    chat_id=chat_id,
-                    audio=InputFile(f, filename=os.path.basename(full)),
-                    caption=caption,
-                )
+            with open(full, "rb") as f:  # reabre a cada tentativa
+                msg = await context.bot.send_audio(chat_id=chat_id, audio=InputFile(f, filename=os.path.basename(full)), caption=caption)
             if msg and msg.audio and msg.audio.file_id:
-                FILE_IDS["audio"] = msg.audio.file_id
-                save_cache(FILE_IDS)
+                FILE_IDS["audio"] = msg.audio.file_id; save_cache(FILE_IDS)
                 log.info("Cacheado file_id audio: %s", msg.audio.file_id)
             return msg
         except RetryAfter as e:
             wait = getattr(e, "retry_after", 1)
             log.warning("RetryAfter ao enviar áudio local: aguardando %ss ...", wait)
-            await asyncio.sleep(wait)
-            last_exc = e
+            await asyncio.sleep(wait); last_exc = e
         except TimedOut:
             log.warning("TimedOut ao enviar áudio local: tentando novamente ...")
             await asyncio.sleep(1)
         except Exception as e:
-            last_exc = e
-            break
-
+            last_exc = e; break
     if last_exc:
         log.warning("Envio de áudio local falhou: %s", last_exc)
     log.warning("Nenhuma rota de áudio funcionou. Seguindo sem áudio.")
-
 
 # ====== Utilitários ======
 async def ids(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -207,15 +182,16 @@ async def ids(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _retry_send(lambda: context.bot.send_message(chat_id=update.effective_chat.id, text="pong ✅"))
 
-# Captura automática: se você mandar um áudio ou voice, salvamos o file_id
+async def audiotest(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_audio_fast(context, update.effective_chat.id, caption="🔊 teste de áudio")
+
+# Captura automática (se você enviar um áudio/voice, salva o file_id)
 async def capture_audio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
     fid = msg.audio.file_id if msg.audio else (msg.voice.file_id if msg.voice else None)
-    if not fid:
-        return
-    FILE_IDS["audio"] = fid
-    save_cache(FILE_IDS)
-    await _retry_send(lambda: context.bot.send_message(chat_id=update.effective_chat.id, text=f"🎧 Áudio salvo!\nFILE_ID_AUDIO=\n{fid}\n\nColoque isso em Variables para ficar permanente."))
+    if not fid: return
+    FILE_IDS["audio"] = fid; save_cache(FILE_IDS)
+    await _retry_send(lambda: context.bot.send_message(chat_id=update.effective_chat.id, text=f"🎧 Áudio salvo!\nFILE_ID_AUDIO=\n{fid}\n\nColoque isso nas Variables para ficar permanente."))
     log.info("Audio file_id salvo: %s", fid)
 
 # ====== /start ======
@@ -224,7 +200,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     log.info("START user_id=%s username=%s chat_id=%s", user.id, user.username, chat_id)
 
-    # feedback imediato
     await _retry_send(lambda: context.bot.send_message(chat_id=chat_id, text="⏳ Preparando seu presente…"))
 
     # 1) áudio
@@ -278,12 +253,13 @@ def main():
 
     app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CommandHandler("ids", ids))
+    app.add_handler(CommandHandler("audiotest", audiotest))
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.AUDIO | filters.VOICE, capture_audio))  # salva file_id do áudio
+    app.add_handler(MessageHandler(filters.AUDIO | filters.VOICE, capture_audio))
     app.add_handler(CallbackQueryHandler(confirm_sim, pattern=f"^{CB_CONFIRM_SIM}$"))
     app.add_error_handler(on_error)
 
-    log.info("🤖 Bot rodando. Áudio via ENV/cache/URL/local; fotos por URL com cache de file_id.")
+    log.info("🤖 Bot rodando. Áudio via FILE_ID (ENV) com fallback; fotos por URL com cache de file_id.")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
