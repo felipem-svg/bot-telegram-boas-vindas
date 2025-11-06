@@ -121,7 +121,7 @@ async def send_photo_from_url(context: ContextTypes.DEFAULT_TYPE, chat_id: int, 
             except Exception as e2:
                 log.warning("Falha até no fallback de texto: %s", e2)
 
-# ====== ÁUDIO: ENV (file_id) → cache (file_id) → ENV URL → local ======
+# ====== ÁUDIO: ENV (file_id) → cache (file_id) → ENV URL → LOCAL (com reopen por tentativa) ======
 async def send_audio_fast(context: ContextTypes.DEFAULT_TYPE, chat_id: int, *, caption: str|None=None):
     # 1) ENV file_id
     if AUDIO_ID_ENV:
@@ -154,26 +154,45 @@ async def send_audio_fast(context: ContextTypes.DEFAULT_TYPE, chat_id: int, *, c
         except Exception as e:
             log.warning("Envio de áudio por URL falhou: %s", e)
 
-    # 4) LOCAL
+    # 4) LOCAL — reabrindo o arquivo a cada tentativa
     full = os.path.join(os.path.dirname(__file__), AUDIO_FILE_LOCAL)
     size = os.path.getsize(full) if os.path.exists(full) else 0
     log.info("Checando áudio local: path=%s size=%s bytes", full, size)
-    if os.path.exists(full) and size > 0:
-        log.info("Áudio via arquivo local ...")
+    if not (os.path.exists(full) and size > 0):
+        log.warning("Áudio local ausente/vazio: %s", full)
+        log.warning("Nenhuma rota de áudio funcionou. Seguindo sem áudio.")
+        return
+
+    last_exc = None
+    for attempt in range(2):  # mesmo número de tentativas do _retry_send
         try:
-            with open(full, "rb") as f:
-                msg = await _retry_send(lambda: context.bot.send_audio(chat_id=chat_id, audio=InputFile(f, filename=os.path.basename(full)), caption=caption))
+            with open(full, "rb") as f:  # <-- reabre a cada tentativa
+                msg = await context.bot.send_audio(
+                    chat_id=chat_id,
+                    audio=InputFile(f, filename=os.path.basename(full)),
+                    caption=caption,
+                )
             if msg and msg.audio and msg.audio.file_id:
                 FILE_IDS["audio"] = msg.audio.file_id
                 save_cache(FILE_IDS)
                 log.info("Cacheado file_id audio: %s", msg.audio.file_id)
             return msg
+        except RetryAfter as e:
+            wait = getattr(e, "retry_after", 1)
+            log.warning("RetryAfter ao enviar áudio local: aguardando %ss ...", wait)
+            await asyncio.sleep(wait)
+            last_exc = e
+        except TimedOut:
+            log.warning("TimedOut ao enviar áudio local: tentando novamente ...")
+            await asyncio.sleep(1)
         except Exception as e:
-            log.warning("Envio de áudio local falhou: %s", e)
-    else:
-        log.warning("Áudio local ausente/vazio: %s", full)
+            last_exc = e
+            break
 
+    if last_exc:
+        log.warning("Envio de áudio local falhou: %s", last_exc)
     log.warning("Nenhuma rota de áudio funcionou. Seguindo sem áudio.")
+
 
 # ====== Utilitários ======
 async def ids(update: Update, context: ContextTypes.DEFAULT_TYPE):
