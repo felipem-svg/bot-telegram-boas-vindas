@@ -1,30 +1,20 @@
-import os
-import io
-import asyncio
-import logging
+import os, json, asyncio, logging
 from dotenv import load_dotenv
-from PIL import Image
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-    JobQueue,
+    ApplicationBuilder, CommandHandler, CallbackQueryHandler,
+    ContextTypes, JobQueue
 )
-from telegram.error import BadRequest, TelegramError, RetryAfter, TimedOut
+from telegram.error import RetryAfter, TimedOut
 from telegram.request import HTTPXRequest
 
 # ========= LOGGING =========
-logging.basicConfig(
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    level=logging.INFO,
-)
+logging.basicConfig(format="%(asctime)s [%(levelname)s] %(name)s: %(message)s", level=logging.INFO)
 log = logging.getLogger("presente-do-jota")
 
 # ========= CONFIG =========
 load_dotenv()
-TOKEN = os.getenv("TELEGRAM_TOKEN")
+TOKEN = os.getenv("TELEGRAM_TOKEN") or ""
 if not TOKEN:
     raise RuntimeError("❌ Defina TELEGRAM_TOKEN no .env ou nas Variables do Railway")
 
@@ -36,193 +26,208 @@ LINK_CADASTRO = (
 )
 LINK_COMUNIDADE_FINAL = "https://t.me/+rtq84bGVBhQyZmJh"
 
-# Arquivos
+# Arquivos locais (JPG/MP3 LEVES)
 AUDIO_INICIAL = "Audio i.mp3"
 IMG_INICIAL = "presente_do_jota.jpg"
 IMG_FINAL = "presente_do_jota_2.jpg"
 
-# Callback data
+# File IDs via ENV (opcional): se você preencher, nem precisa do cache JSON
+ENV_AUDIO_ID = os.getenv("FILE_ID_AUDIO")          # opcional
+ENV_IMG1_ID  = os.getenv("FILE_ID_IMG_INICIAL")    # opcional
+ENV_IMG2_ID  = os.getenv("FILE_ID_IMG_FINAL")      # opcional
+
+# Cache JSON local (persistente entre reinícios dentro do mesmo contêiner)
+CACHE_PATH = os.path.join(os.path.dirname(__file__), "file_ids.json")
+def load_cache():
+    try:
+        with open(CACHE_PATH, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+def save_cache(d: dict):
+    try:
+        with open(CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(d, f)
+    except Exception as e:
+        log.warning("Não consegui salvar cache de file_id: %s", e)
+
+FILE_IDS = load_cache()
+
+# Callback data & timers
 CB_CONFIRM_SIM = "confirm_sim"
-WAIT_SECONDS = 120  # 2 minutos
+WAIT_SECONDS = 120
 PENDING_FOLLOWUPS: set[int] = set()
 
-# ========== BOTÕES ==========
+# ====== Botões ======
 def btn_criar_conta():
     return InlineKeyboardMarkup([[InlineKeyboardButton("🟢 Criar conta agora", url=LINK_CADASTRO)]])
-
 def btn_sim():
     return InlineKeyboardMarkup([[InlineKeyboardButton("✅ SIM", callback_data=CB_CONFIRM_SIM)]])
-
 def btn_acessar_comunidade():
     return InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Acessar comunidade", url=LINK_COMUNIDADE_FINAL)]])
 
-# ========== HELPERS DE ENVIO COM RETRY ==========
-async def _retry_send(coro_factory, *, max_attempts=2):
-    """Executa uma chamada ao Telegram com retry simples em TimedOut/RetryAfter."""
-    attempt = 0
-    last_exc = None
-    while attempt < max_attempts:
+# ====== Helper de retry curto ======
+async def _retry_send(coro_factory, max_attempts=2):
+    last = None
+    for _ in range(max_attempts):
         try:
             return await coro_factory()
         except RetryAfter as e:
-            wait = getattr(e, "retry_after", 1)
-            log.warning("RetryAfter: aguardando %ss ...", wait)
-            await asyncio.sleep(wait)
-            attempt += 1
-            last_exc = e
+            await asyncio.sleep(getattr(e, "retry_after", 1))
+            last = e
         except TimedOut:
-            log.warning("TimedOut: tentando novamente ...")
             await asyncio.sleep(1)
-            attempt += 1
         except Exception as e:
-            last_exc = e
+            last = e
             break
-    if last_exc:
-        raise last_exc
+    if last:
+        raise last
 
-# ========== ENVIO DE IMAGEM (converte p/ JPEG + retry) ==========
-async def send_image(context: ContextTypes.DEFAULT_TYPE, chat_id: int, path: str, caption=None, reply_markup=None):
-    try:
-        full = os.path.join(os.path.dirname(__file__), path)
-        if not (os.path.exists(full) and os.path.getsize(full) > 0):
-            raise FileNotFoundError(f"Imagem ausente/vazia: {full}")
-
-        with Image.open(full) as im:
-            im = im.convert("RGB")
-            buf = io.BytesIO()
-            im.save(buf, format="JPEG", quality=85, optimize=True)
-            buf.seek(0)
-
-        await _retry_send(lambda: context.bot.send_photo(
-            chat_id=chat_id,
-            photo=buf,
-            caption=caption,
-            parse_mode="Markdown",
-            reply_markup=reply_markup,
-        ))
-        log.info("Imagem enviada: %s", path)
-    except Exception as e:
-        log.warning("Falha ao enviar imagem %s (%s). Enviando texto.", path, e)
-        if caption:
-            await _retry_send(lambda: context.bot.send_message(
-                chat_id=chat_id,
-                text=caption,
-                parse_mode="Markdown",
-                reply_markup=reply_markup,
-            ))
-
-# ========== ENVIO DE ÁUDIO (retry) ==========
-async def send_audio(context: ContextTypes.DEFAULT_TYPE, chat_id: int, local_path: str, caption=None):
+# ====== Envio rápido por file_id (com fallback upload) ======
+async def send_photo_fast(context: ContextTypes.DEFAULT_TYPE, chat_id: int, *, file_id_env: str|None, file_id_key: str, local_path: str, caption: str|None=None, reply_markup=None):
+    # 1) tenta ENV
+    fid_env = file_id_env or ""
+    if fid_env:
+        try:
+            return await _retry_send(lambda: context.bot.send_photo(chat_id=chat_id, photo=fid_env, caption=caption, parse_mode="Markdown", reply_markup=reply_markup))
+        except Exception:
+            log.warning("file_id ENV (%s) falhou, tentando cache/local...", file_id_key)
+    # 2) tenta CACHE
+    fid = FILE_IDS.get(file_id_key)
+    if fid:
+        try:
+            return await _retry_send(lambda: context.bot.send_photo(chat_id=chat_id, photo=fid, caption=caption, parse_mode="Markdown", reply_markup=reply_markup))
+        except Exception:
+            log.warning("file_id cache (%s) falhou, tentando local...", file_id_key)
+            FILE_IDS.pop(file_id_key, None); save_cache(FILE_IDS)
+    # 3) faz upload local UMA vez e salva o file_id
     full = os.path.join(os.path.dirname(__file__), local_path)
     if not (os.path.exists(full) and os.path.getsize(full) > 0):
-        log.warning("Áudio ausente/vazio: %s", full)
+        log.warning("Imagem ausente/vazia: %s", full)
+        if caption:
+            return await _retry_send(lambda: context.bot.send_message(chat_id=chat_id, text=caption, parse_mode="Markdown", reply_markup=reply_markup))
         return
     with open(full, "rb") as f:
-        await _retry_send(lambda: context.bot.send_audio(
-            chat_id=chat_id,
-            audio=InputFile(f, filename=os.path.basename(local_path)),
-            caption=caption,
-        ))
-    log.info("Áudio enviado: %s", local_path)
+        msg = await _retry_send(lambda: context.bot.send_photo(chat_id=chat_id, photo=InputFile(f, filename=os.path.basename(local_path)), caption=caption, parse_mode="Markdown", reply_markup=reply_markup))
+    if msg and msg.photo:
+        new_id = msg.photo[-1].file_id
+        FILE_IDS[file_id_key] = new_id
+        save_cache(FILE_IDS)
+        log.info("Cacheado file_id %s: %s", file_id_key, new_id)
+    return msg
 
-# ========== COMANDOS DE TESTE ==========
+async def send_audio_fast(context: ContextTypes.DEFAULT_TYPE, chat_id: int, *, file_id_env: str|None, file_id_key: str, local_path: str, caption: str|None=None):
+    # 1) ENV
+    if file_id_env:
+        try:
+            return await _retry_send(lambda: context.bot.send_audio(chat_id=chat_id, audio=file_id_env, caption=caption))
+        except Exception:
+            log.warning("file_id ENV (audio) falhou, tentando cache/local...")
+    # 2) CACHE
+    fid = FILE_IDS.get(file_id_key)
+    if fid:
+        try:
+            return await _retry_send(lambda: context.bot.send_audio(chat_id=chat_id, audio=fid, caption=caption))
+        except Exception:
+            log.warning("file_id cache (audio) falhou, tentando local...")
+            FILE_IDS.pop(file_id_key, None); save_cache(FILE_IDS)
+    # 3) upload local
+    full = os.path.join(os.path.dirname(__file__), local_path)
+    if not (os.path.exists(full) and os.path.getsize(full) > 0):
+        log.warning("Áudio ausente/vazio: %s", full); return
+    with open(full, "rb") as f:
+        msg = await _retry_send(lambda: context.bot.send_audio(chat_id=chat_id, audio=InputFile(f, filename=os.path.basename(local_path)), caption=caption))
+    if msg and msg.audio and msg.audio.file_id:
+        FILE_IDS[file_id_key] = msg.audio.file_id
+        save_cache(FILE_IDS)
+        log.info("Cacheado file_id audio: %s", msg.audio.file_id)
+    return msg
+
+# ====== Comandos utilitários ======
+async def ids(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    data = {
+        "FILE_ID_AUDIO": FILE_IDS.get("audio"),
+        "FILE_ID_IMG_INICIAL": FILE_IDS.get("img1"),
+        "FILE_ID_IMG_FINAL": FILE_IDS.get("img2"),
+    }
+    txt = "file_ids salvos:\n" + "\n".join(f"{k}: {v or '-'}" for k, v in data.items())
+    await _retry_send(lambda: context.bot.send_message(chat_id=update.effective_chat.id, text=txt))
+
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _retry_send(lambda: context.bot.send_message(chat_id=update.effective_chat.id, text="pong ✅"))
 
 async def test10(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     schedule_followup(context, chat_id, wait_seconds=10)
-    await _retry_send(lambda: context.bot.send_message(chat_id=chat_id, text="⏱️ Follow-up de TESTE agendado para 10s."))
+    await _retry_send(lambda: context.bot.send_message(chat_id=chat_id, text="⏱️ Follow-up em 10s agendado."))
 
-# ========== /start ==========
+# ====== /start ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     user = update.effective_user
     log.info("START user_id=%s username=%s chat_id=%s", user.id, user.username, chat_id)
 
-    # 1) áudio inicial
-    try:
-        await send_audio(context, chat_id, AUDIO_INICIAL, caption="🔊 Ouça essa mensagem rápida antes de continuar")
-    except Exception as e:
-        log.warning("Falha ao enviar áudio (%s).", e)
+    # 0) resposta imediata (sensação de rapidez)
+    await _retry_send(lambda: context.bot.send_message(chat_id=chat_id, text="⏳ preparando seu presente…"))
 
-    # 2) imagem + CTA
-    await send_image(context, chat_id, IMG_INICIAL, "🎁 *Presente do Jota aguardando…*\n\nClique no botão abaixo para abrir sua conta e garantir seu presente de membros novos.", btn_criar_conta())
+    # 1) áudio (por file_id/env/cache → senão upload 1x)
+    await send_audio_fast(context, chat_id, file_id_env=ENV_AUDIO_ID, file_id_key="audio", local_path=AUDIO_INICIAL, caption="🔊 Mensagem rápida antes de continuar")
+
+    # 2) imagem + CTA (por file_id/env/cache → senão upload 1x)
+    caption = "🎁 *Presente do Jota aguardando…*\n\nClique no botão abaixo para abrir sua conta e garantir seu presente de membros novos."
+    await send_photo_fast(context, chat_id, file_id_env=ENV_IMG1_ID, file_id_key="img1", local_path=IMG_INICIAL, caption=caption, reply_markup=btn_criar_conta())
 
     # 3) agenda follow-up
     schedule_followup(context, chat_id, WAIT_SECONDS)
 
-# ========== AGENDAMENTO ==========
+# ====== Follow-up ======
 def schedule_followup(context: ContextTypes.DEFAULT_TYPE, chat_id: int, wait_seconds: int):
     if chat_id in PENDING_FOLLOWUPS:
-        log.info("Follow-up já pendente para chat_id=%s", chat_id)
-        return
+        log.info("Follow-up já pendente para chat_id=%s", chat_id); return
     PENDING_FOLLOWUPS.add(chat_id)
     jq = context.application.job_queue
     if not jq:
-        log.error("JobQueue não inicializado (instale o extra job-queue).")
-        return
-    job_name = f"followup-{chat_id}"
-    jq.run_once(send_followup_job, when=wait_seconds, data={"chat_id": chat_id}, name=job_name)
-    log.info("Follow-up (%ss) agendado via JobQueue: %s", wait_seconds, job_name)
+        log.error("JobQueue não inicializado (instale o extra job-queue)."); return
+    jq.run_once(send_followup_job, when=wait_seconds, data={"chat_id": chat_id}, name=f"followup-{chat_id}")
+    log.info("Follow-up (%ss) agendado via JobQueue.", wait_seconds)
 
 async def send_followup_job(context: ContextTypes.DEFAULT_TYPE):
     chat_id = context.job.data["chat_id"]
     log.info("JobQueue disparou follow-up para chat_id=%s", chat_id)
     if chat_id in PENDING_FOLLOWUPS:
-        await send_followup_message(context, chat_id)
+        await _retry_send(lambda: context.bot.send_message(chat_id=chat_id, text="Eae, já conseguiu finalizar a criação da sua conta?", reply_markup=btn_sim()))
         PENDING_FOLLOWUPS.discard(chat_id)
 
-async def send_followup_message(context: ContextTypes.DEFAULT_TYPE, chat_id: int):
-    await _retry_send(lambda: context.bot.send_message(
-        chat_id=chat_id,
-        text="Eae, já conseguiu finalizar a criação da sua conta?",
-        reply_markup=btn_sim(),
-    ))
-    log.info("Follow-up enviado ao chat_id=%s", chat_id)
-
-# ========== Clique no SIM ==========
+# ====== Clique no SIM ======
 async def confirm_sim(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    chat_id = query.message.chat_id
-    log.info("CONFIRM_SIM chat_id=%s user_id=%s", chat_id, query.from_user.id)
-
+    q = update.callback_query
+    await q.answer()
+    chat_id = q.message.chat_id
+    log.info("CONFIRM_SIM user_id=%s chat_id=%s", q.from_user.id, chat_id)
     texto_final = (
         "🎁 *Presente Liberado!!!*\n\n"
         "Basta você entrar na comunidade e buscar o sorteio que já vou te enviar,\n"
         "e fica de olho que o resultado sai na live de *HOJE*."
     )
-    await send_image(context, chat_id, IMG_FINAL, texto_final, btn_acessar_comunidade())
+    await send_photo_fast(context, chat_id, file_id_env=ENV_IMG2_ID, file_id_key="img2", local_path=IMG_FINAL, caption=texto_final, reply_markup=btn_acessar_comunidade())
 
-# ========== Error handler ==========
+# ====== MAIN ======
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     log.exception("Unhandled error: %s | update=%s", context.error, update)
 
-# ========== MAIN ==========
 def main():
-    # timeouts maiores no cliente HTTP => menos ReadTimeout
-    request = HTTPXRequest(
-        read_timeout=30.0,
-        write_timeout=30.0,
-        connect_timeout=10.0,
-        pool_timeout=10.0,
-    )
-
-    app = ApplicationBuilder()\
-        .token(TOKEN)\
-        .request(request)\
-        .job_queue(JobQueue())\
-        .build()
+    # timeouts um pouco maiores (mas sem exagero)
+    request = HTTPXRequest(read_timeout=20.0, write_timeout=20.0, connect_timeout=10.0, pool_timeout=10.0)
+    app = ApplicationBuilder().token(TOKEN).request(request).job_queue(JobQueue()).build()
 
     app.add_handler(CommandHandler("ping", ping))
+    app.add_handler(CommandHandler("ids", ids))
     app.add_handler(CommandHandler("test10", test10))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(confirm_sim, pattern=f"^{CB_CONFIRM_SIM}$"))
-
     app.add_error_handler(on_error)
 
-    log.info("🤖 Bot rodando (polling) com timeouts aumentados e retries. Dropando updates pendentes.")
+    log.info("🤖 Bot rodando. Enviando mídia por file_id (ENV/cache) para máxima velocidade.")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
