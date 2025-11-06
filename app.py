@@ -26,17 +26,17 @@ LINK_CADASTRO = (
 )
 LINK_COMUNIDADE_FINAL = "https://t.me/+rtq84bGVBhQyZmJh"
 
-# Arquivos locais (JPG/MP3 LEVES)
+# Arquivos locais (garanta que não estão em LFS e têm > 0 bytes)
 AUDIO_INICIAL = "Audio i.mp3"
-IMG_INICIAL = "presente_do_jota.jpg"
-IMG_FINAL = "presente_do_jota_2.jpg"
+IMG_INICIAL   = "presente_do_jota.jpg"
+IMG_FINAL     = "presente_do_jota_2.jpg"
 
-# File IDs via ENV (opcional): se você preencher, nem precisa do cache JSON
-ENV_AUDIO_ID = os.getenv("FILE_ID_AUDIO")          # opcional
-ENV_IMG1_ID  = os.getenv("FILE_ID_IMG_INICIAL")    # opcional
-ENV_IMG2_ID  = os.getenv("FILE_ID_IMG_FINAL")      # opcional
+# file_ids por ENV (opcional). Se você preencher, envio fica instantâneo.
+ENV_AUDIO_ID = os.getenv("FILE_ID_AUDIO")
+ENV_IMG1_ID  = os.getenv("FILE_ID_IMG_INICIAL")
+ENV_IMG2_ID  = os.getenv("FILE_ID_IMG_FINAL")
 
-# Cache JSON local (persistente entre reinícios dentro do mesmo contêiner)
+# Cache JSON local de file_ids
 CACHE_PATH = os.path.join(os.path.dirname(__file__), "file_ids.json")
 def load_cache():
     try:
@@ -53,7 +53,7 @@ def save_cache(d: dict):
 
 FILE_IDS = load_cache()
 
-# Callback data & timers
+# Callback e timers
 CB_CONFIRM_SIM = "confirm_sim"
 WAIT_SECONDS = 120
 PENDING_FOLLOWUPS: set[int] = set()
@@ -66,16 +66,19 @@ def btn_sim():
 def btn_acessar_comunidade():
     return InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Acessar comunidade", url=LINK_COMUNIDADE_FINAL)]])
 
-# ====== Helper de retry curto ======
+# ====== Retry curto ======
 async def _retry_send(coro_factory, max_attempts=2):
     last = None
     for _ in range(max_attempts):
         try:
             return await coro_factory()
         except RetryAfter as e:
-            await asyncio.sleep(getattr(e, "retry_after", 1))
+            wait = getattr(e, "retry_after", 1)
+            log.warning("RetryAfter: aguardando %ss ...", wait)
+            await asyncio.sleep(wait)
             last = e
         except TimedOut:
+            log.warning("TimedOut: tentando novamente ...")
             await asyncio.sleep(1)
         except Exception as e:
             last = e
@@ -83,67 +86,76 @@ async def _retry_send(coro_factory, max_attempts=2):
     if last:
         raise last
 
-# ====== Envio rápido por file_id (com fallback upload) ======
-async def send_photo_fast(context: ContextTypes.DEFAULT_TYPE, chat_id: int, *, file_id_env: str|None, file_id_key: str, local_path: str, caption: str|None=None, reply_markup=None):
-    # 1) tenta ENV
-    fid_env = file_id_env or ""
-    if fid_env:
-        try:
-            return await _retry_send(lambda: context.bot.send_photo(chat_id=chat_id, photo=fid_env, caption=caption, parse_mode="Markdown", reply_markup=reply_markup))
-        except Exception:
-            log.warning("file_id ENV (%s) falhou, tentando cache/local...", file_id_key)
-    # 2) tenta CACHE
-    fid = FILE_IDS.get(file_id_key)
-    if fid:
-        try:
-            return await _retry_send(lambda: context.bot.send_photo(chat_id=chat_id, photo=fid, caption=caption, parse_mode="Markdown", reply_markup=reply_markup))
-        except Exception:
-            log.warning("file_id cache (%s) falhou, tentando local...", file_id_key)
-            FILE_IDS.pop(file_id_key, None); save_cache(FILE_IDS)
-    # 3) faz upload local UMA vez e salva o file_id
-    full = os.path.join(os.path.dirname(__file__), local_path)
-    if not (os.path.exists(full) and os.path.getsize(full) > 0):
-        log.warning("Imagem ausente/vazia: %s", full)
-        if caption:
-            return await _retry_send(lambda: context.bot.send_message(chat_id=chat_id, text=caption, parse_mode="Markdown", reply_markup=reply_markup))
-        return
-    with open(full, "rb") as f:
-        msg = await _retry_send(lambda: context.bot.send_photo(chat_id=chat_id, photo=InputFile(f, filename=os.path.basename(local_path)), caption=caption, parse_mode="Markdown", reply_markup=reply_markup))
-    if msg and msg.photo:
-        new_id = msg.photo[-1].file_id
-        FILE_IDS[file_id_key] = new_id
-        save_cache(FILE_IDS)
-        log.info("Cacheado file_id %s: %s", file_id_key, new_id)
-    return msg
-
+# ====== Envio de ÁUDIO (ENV/cache/local) ======
 async def send_audio_fast(context: ContextTypes.DEFAULT_TYPE, chat_id: int, *, file_id_env: str|None, file_id_key: str, local_path: str, caption: str|None=None):
-    # 1) ENV
-    if file_id_env:
-        try:
+    try:
+        # 1) ENV
+        if file_id_env:
+            log.info("Enviando áudio via file_id ENV ...")
             return await _retry_send(lambda: context.bot.send_audio(chat_id=chat_id, audio=file_id_env, caption=caption))
-        except Exception:
-            log.warning("file_id ENV (audio) falhou, tentando cache/local...")
-    # 2) CACHE
-    fid = FILE_IDS.get(file_id_key)
-    if fid:
-        try:
-            return await _retry_send(lambda: context.bot.send_audio(chat_id=chat_id, audio=fid, caption=caption))
-        except Exception:
-            log.warning("file_id cache (audio) falhou, tentando local...")
-            FILE_IDS.pop(file_id_key, None); save_cache(FILE_IDS)
-    # 3) upload local
-    full = os.path.join(os.path.dirname(__file__), local_path)
-    if not (os.path.exists(full) and os.path.getsize(full) > 0):
-        log.warning("Áudio ausente/vazio: %s", full); return
-    with open(full, "rb") as f:
-        msg = await _retry_send(lambda: context.bot.send_audio(chat_id=chat_id, audio=InputFile(f, filename=os.path.basename(local_path)), caption=caption))
-    if msg and msg.audio and msg.audio.file_id:
-        FILE_IDS[file_id_key] = msg.audio.file_id
-        save_cache(FILE_IDS)
-        log.info("Cacheado file_id audio: %s", msg.audio.file_id)
-    return msg
+        # 2) CACHE
+        fid = FILE_IDS.get(file_id_key)
+        if fid:
+            log.info("Enviando áudio via file_id cache ...")
+            try:
+                return await _retry_send(lambda: context.bot.send_audio(chat_id=chat_id, audio=fid, caption=caption))
+            except Exception:
+                log.warning("file_id cache (audio) falhou, removendo do cache e tentando local...")
+                FILE_IDS.pop(file_id_key, None); save_cache(FILE_IDS)
+        # 3) LOCAL
+        full = os.path.join(os.path.dirname(__file__), local_path)
+        if not (os.path.exists(full) and os.path.getsize(full) > 0):
+            log.warning("Áudio ausente/vazio: %s", full); return
+        with open(full, "rb") as f:
+            msg = await _retry_send(lambda: context.bot.send_audio(chat_id=chat_id, audio=InputFile(f, filename=os.path.basename(local_path)), caption=caption))
+        if msg and msg.audio and msg.audio.file_id:
+            FILE_IDS[file_id_key] = msg.audio.file_id
+            save_cache(FILE_IDS)
+            log.info("Cacheado file_id audio: %s", msg.audio.file_id)
+        return msg
+    except Exception as e:
+        log.warning("Falha ao enviar áudio: %s", e)
 
-# ====== Comandos utilitários ======
+# ====== Envio de FOTO (ENV/cache/local) com FALLBACK de TEXTO ======
+async def send_photo_fast(context: ContextTypes.DEFAULT_TYPE, chat_id: int, *, file_id_env: str|None, file_id_key: str, local_path: str, caption: str|None=None, reply_markup=None):
+    try:
+        # 1) ENV
+        if file_id_env:
+            log.info("Enviando foto via file_id ENV (%s)...", file_id_key)
+            return await _retry_send(lambda: context.bot.send_photo(chat_id=chat_id, photo=file_id_env, caption=caption, parse_mode="Markdown", reply_markup=reply_markup))
+        # 2) CACHE
+        fid = FILE_IDS.get(file_id_key)
+        if fid:
+            log.info("Enviando foto via file_id cache (%s)...", file_id_key)
+            try:
+                return await _retry_send(lambda: context.bot.send_photo(chat_id=chat_id, photo=fid, caption=caption, parse_mode="Markdown", reply_markup=reply_markup))
+            except Exception:
+                log.warning("file_id cache (%s) falhou, removendo e tentando local...", file_id_key)
+                FILE_IDS.pop(file_id_key, None); save_cache(FILE_IDS)
+        # 3) LOCAL
+        full = os.path.join(os.path.dirname(__file__), local_path)
+        if not (os.path.exists(full) and os.path.getsize(full) > 0):
+            log.warning("Imagem ausente/vazia: %s", full)
+            if caption:
+                return await _retry_send(lambda: context.bot.send_message(chat_id=chat_id, text=caption, parse_mode="Markdown", reply_markup=reply_markup))
+            return
+        with open(full, "rb") as f:
+            msg = await _retry_send(lambda: context.bot.send_photo(chat_id=chat_id, photo=InputFile(f, filename=os.path.basename(local_path)), caption=caption, parse_mode="Markdown", reply_markup=reply_markup))
+        if msg and msg.photo:
+            new_id = msg.photo[-1].file_id
+            FILE_IDS[file_id_key] = new_id
+            save_cache(FILE_IDS)
+            log.info("Cacheado file_id %s: %s", file_id_key, new_id)
+        return msg
+    except Exception as e:
+        log.warning("Falha geral ao enviar foto (%s). Enviando texto como fallback.", e)
+        if caption:
+            try:
+                return await _retry_send(lambda: context.bot.send_message(chat_id=chat_id, text=caption, parse_mode="Markdown", reply_markup=reply_markup))
+            except Exception as e2:
+                log.warning("Falha até no fallback de texto: %s", e2)
+
+# ====== Utilitários ======
 async def ids(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = {
         "FILE_ID_AUDIO": FILE_IDS.get("audio"),
@@ -156,10 +168,12 @@ async def ids(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await _retry_send(lambda: context.bot.send_message(chat_id=update.effective_chat.id, text="pong ✅"))
 
-async def test10(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    schedule_followup(context, chat_id, wait_seconds=10)
-    await _retry_send(lambda: context.bot.send_message(chat_id=chat_id, text="⏱️ Follow-up em 10s agendado."))
+# ====== TESTES de foto isolados ======
+async def photo1(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_photo_fast(context, update.effective_chat.id, file_id_env=ENV_IMG1_ID, file_id_key="img1", local_path=IMG_INICIAL, caption="(teste) imagem 1", reply_markup=btn_criar_conta())
+
+async def photo2(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_photo_fast(context, update.effective_chat.id, file_id_env=ENV_IMG2_ID, file_id_key="img2", local_path=IMG_FINAL, caption="(teste) imagem 2", reply_markup=btn_acessar_comunidade())
 
 # ====== /start ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -167,17 +181,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     log.info("START user_id=%s username=%s chat_id=%s", user.id, user.username, chat_id)
 
-    # 0) resposta imediata (sensação de rapidez)
+    # resposta imediata (sensação de rapidez)
     await _retry_send(lambda: context.bot.send_message(chat_id=chat_id, text="⏳ preparando seu presente…"))
 
-    # 1) áudio (por file_id/env/cache → senão upload 1x)
+    # 1) áudio
     await send_audio_fast(context, chat_id, file_id_env=ENV_AUDIO_ID, file_id_key="audio", local_path=AUDIO_INICIAL, caption="🔊 Mensagem rápida antes de continuar")
 
-    # 2) imagem + CTA (por file_id/env/cache → senão upload 1x)
-    caption = "🎁 *Presente do Jota aguardando…*\n\nClique no botão abaixo para abrir sua conta e garantir seu presente de membros novos."
+    # 2) imagem + CTA
+    caption = "🎁 *Presente do Jota aguardando…*\n\nClique no botão abaixo."
     await send_photo_fast(context, chat_id, file_id_env=ENV_IMG1_ID, file_id_key="img1", local_path=IMG_INICIAL, caption=caption, reply_markup=btn_criar_conta())
 
-    # 3) agenda follow-up
+    # 3) follow-up em 2 min
     schedule_followup(context, chat_id, WAIT_SECONDS)
 
 # ====== Follow-up ======
@@ -216,18 +230,18 @@ async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE):
     log.exception("Unhandled error: %s | update=%s", context.error, update)
 
 def main():
-    # timeouts um pouco maiores (mas sem exagero)
     request = HTTPXRequest(read_timeout=20.0, write_timeout=20.0, connect_timeout=10.0, pool_timeout=10.0)
     app = ApplicationBuilder().token(TOKEN).request(request).job_queue(JobQueue()).build()
 
     app.add_handler(CommandHandler("ping", ping))
     app.add_handler(CommandHandler("ids", ids))
-    app.add_handler(CommandHandler("test10", test10))
+    app.add_handler(CommandHandler("photo1", photo1))
+    app.add_handler(CommandHandler("photo2", photo2))
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(confirm_sim, pattern=f"^{CB_CONFIRM_SIM}$"))
     app.add_error_handler(on_error)
 
-    log.info("🤖 Bot rodando. Enviando mídia por file_id (ENV/cache) para máxima velocidade.")
+    log.info("🤖 Bot rodando. Imagens/áudio via file_id (ENV/cache) com fallback de upload + texto.")
     app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
