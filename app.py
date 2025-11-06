@@ -20,9 +20,7 @@ if not TOKEN:
 
 # Links
 LINK_CADASTRO = (
-    "https://betboom.bet.br/registration/base/?utm_source=inf&utm_medium=bloggers"
-    "&utm_campaign=309&utm_content=regcasino_br&utm_term=6064&aff=alanbase&"
-    "qtag=a6064_t309_c147_s019a5553-fabe-7180-b1d2-8c55097d2b32_"
+    "https://click.betboom.com/BdnxJncs?landing=2833&sub_id1=Telegram"
 )
 LINK_COMUNIDADE_FINAL = "https://t.me/+rtq84bGVBhQyZmJh"
 
