@@ -760,7 +760,7 @@ async def on_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     texto = (
         f"Falaaa {first}, tá por aí? 👋\n\n"
-        "Agora você está na COMUNIDADE DA MALU 🤩\n\n"
+        "Agora você está na TROPA DO JOTA 🤩\n\n"
         "Aqui você tem chance de ganhar todo dia.\n\n"
         "Vou te mandar um áudio rápido e depois o botão pra você garantir "
         "seu presente de hoje 👇"
