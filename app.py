@@ -640,6 +640,10 @@ async def run_start_flow(
 
     await track_event(chat_id, "audio_inicial_enviado")
 
+        # ⬇️ NOVO: vídeo logo depois da primeira imagem
+    await send_video_by_slot(context, chat_id, "video1")
+    await track_event(chat_id, "video_pos_primeira_imagem_enviado")
+
     caption = (
         "🎁 Presente do JOTA aguardando…\n\n"
         "Essa caixa é valiosa e vai te render muitos outros prêmios que vai colocar muito dinheiro no seu bolso dentro das lives, é só você seguir os próximos passos clicando no botão abaixo!"
@@ -662,9 +666,7 @@ async def run_start_flow(
         data={"chat_id": chat_id},
     )
 
-    # ⬇️ NOVO: vídeo logo depois da primeira imagem
-    await send_video_by_slot(context, chat_id, "video2")
-    await track_event(chat_id, "video_pos_primeira_imagem_enviado")
+
 
 
 # ====== Handlers ======
