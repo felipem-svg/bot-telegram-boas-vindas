@@ -741,8 +741,7 @@ async def acessar_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     first = q.from_user.first_name or "amigo"
     intro = (
         f"Fala {first}!\n\n"
-        "Já quer garantir sua vaga no VIP + Chance na roleta ou prefere que eu te "
-        "explique rapidinho como funciona?"
+        "já quer garantir um prêmio na minha roleta ou quer que eu te explique certinho como funciona?"
     )
 
     await _retry_send(
