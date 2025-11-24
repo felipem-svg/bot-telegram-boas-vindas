@@ -662,6 +662,10 @@ async def run_start_flow(
         data={"chat_id": chat_id},
     )
 
+    # ⬇️ NOVO: vídeo logo depois da primeira imagem
+    await send_video_by_slot(context, chat_id, "video2")
+    await track_event(chat_id, "video_pos_primeira_imagem_enviado")
+
 
 # ====== Handlers ======
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
