@@ -23,6 +23,7 @@ import telegram
 from telegram.error import RetryAfter, TimedOut
 from openai import OpenAI
 from PIL import Image
+import aiohttp  # <-- para enviar pro Google Forms
 
 # ========= LOGGING =========
 logging.basicConfig(
@@ -56,6 +57,43 @@ TZ_OFFSET = int(os.getenv("TZ_OFFSET_HOURS", "-3"))  # America/Sao_Paulo
 def today_str() -> str:
     tz = timezone(timedelta(hours=TZ_OFFSET))
     return datetime.now(tz).strftime("%d.%m.%y")
+
+
+# ========= TRACKING GOOGLE FORMS / SHEETS =========
+# Dados extraídos do link pré-preenchido que você mandou
+GOOGLE_FORM_URL = (
+    "https://docs.google.com/forms/d/e/"
+    "1FAIpQLScf3cwOS_PoUy1NMF5IrbNFF3QeXjjIuJMQ6PVbQyA0V8FM3g/formResponse"
+)
+
+FIELD_TIMESTAMP = "entry.1409657662"
+FIELD_CHAT_ID = "entry.1850402601"
+FIELD_STEP = "entry.1368055621"
+FIELD_EXTRA = "entry.772961359"
+
+
+async def track_event(chat_id: int, step: str, extra: dict | None = None):
+    """
+    Envia um evento simples pro Google Forms -> Sheets.
+    Cada chamada vira uma linha nova na planilha.
+    """
+    timestamp = datetime.utcnow().isoformat()
+    payload = {
+        FIELD_TIMESTAMP: timestamp,
+        FIELD_CHAT_ID: str(chat_id),
+        FIELD_STEP: step,
+        FIELD_EXTRA: json.dumps(extra or {}, ensure_ascii=False),
+    }
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            await session.post(
+                GOOGLE_FORM_URL,
+                data=payload,
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            )
+    except Exception as e:
+        log.warning(f"Erro ao enviar evento para o Google Sheets: {e}")
 
 
 # Links / mídias
@@ -400,6 +438,8 @@ async def vip_followup_job(context: ContextTypes.DEFAULT_TYPE):
 async def ask_vip_print(context, chat_id: int):
     VIP_PENDING_PRINT.add(chat_id)
 
+    await track_event(chat_id, "vip_pediu_print")
+
     txt = (
         "Todas essas pessoas fizeram parte e ganharam um prêmio muito bom, "
         "escolheram jogar comigo em um grupo com mais acesso!\n\n"
@@ -420,6 +460,8 @@ async def ask_vip_print(context, chat_id: int):
 
 
 async def _vip_send_media_and_request(context, chat_id: int):
+    await track_event(chat_id, "vip_media_iniciada")
+
     await send_audio_fast(
         context,
         chat_id,
@@ -429,6 +471,9 @@ async def _vip_send_media_and_request(context, chat_id: int):
     await send_video_by_slot(context, chat_id, "video1")
     await send_video_by_slot(context, chat_id, "video2")
     await send_video_by_slot(context, chat_id, "video3")
+
+    await track_event(chat_id, "vip_media_enviada")
+
     await ask_vip_print(context, chat_id)
 
 
@@ -505,6 +550,8 @@ async def validate_print_and_reply(
     VIP_PENDING_PRINT.discard(chat_id)
 
     if "aprovado" in text_resp.lower():
+        await track_event(chat_id, "vip_print_aprovado")
+
         congrats = (
             "🎉 Parabéns! Você agora tem acesso à Comunidade VIP.\n\n"
             "Clique no botão abaixo para entrar."
@@ -518,6 +565,8 @@ async def validate_print_and_reply(
             )
         )
         return
+
+    await track_event(chat_id, "vip_print_reprovado")
 
     retry_msg = (
         "⚠️ Reprovado.\n"
@@ -573,6 +622,8 @@ async def run_start_flow(
             )
         )
 
+        await track_event(chat_id, "intro_text_enviado")
+
     # Daqui pra frente é "só áudio pra frente"
     await send_audio_fast(
         context,
@@ -580,6 +631,8 @@ async def run_start_flow(
         caption="🔊 Mensagem rápida antes de continuar",
         var_name="FILE_ID_AUDIO",
     )
+
+    await track_event(chat_id, "audio_inicial_enviado")
 
     caption = (
         "🎁 Presente do JOTA aguardando…\n\n"
@@ -594,6 +647,8 @@ async def run_start_flow(
         caption,
         btn_criar_conta(),
     )
+
+    await track_event(chat_id, "imagem_presente_enviada")
 
     context.application.job_queue.run_once(
         send_followup_job,
@@ -613,6 +668,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args or []
     from_presente = len(args) > 0 and args[0] == "presente"
 
+    await track_event(chat_id, "start", {"from_presente": from_presente})
+
     # aqui você pode diferenciar o comportamento se quiser
     # por enquanto, sempre começa direto do áudio pra frente
     skip_intro = True
@@ -627,6 +684,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def send_followup_job(context: ContextTypes.DEFAULT_TYPE):
     chat_id = context.job.data["chat_id"]
+
+    await track_event(chat_id, "followup_conta_enviado")
+
     await _retry_send(
         lambda: context.bot.send_message(
             chat_id=chat_id,
@@ -642,6 +702,8 @@ async def confirm_sim(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     chat_id = q.message.chat_id
+
+    await track_event(chat_id, "confirmou_conta_sim")
 
     texto_final = (
         "🎁 Presente Liberado!!!\n\n"
@@ -664,6 +726,8 @@ async def acessar_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await q.answer()
     chat_id = q.message.chat_id
 
+    await track_event(chat_id, "clicou_acessar_vip")
+
     first = q.from_user.first_name or "amigo"
     intro = (
         f"Fala {first}!\n\n"
@@ -684,18 +748,29 @@ async def acessar_vip(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def vip_quero_garantir(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    await _vip_send_media_and_request(context, q.message.chat_id)
+    chat_id = q.message.chat_id
+
+    await track_event(chat_id, "vip_quero_garantir")
+
+    await _vip_send_media_and_request(context, chat_id)
 
 
 async def vip_me_explica(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    await _vip_send_media_and_request(context, q.message.chat_id)
+    chat_id = q.message.chat_id
+
+    await track_event(chat_id, "vip_me_explica")
+
+    await _vip_send_media_and_request(context, chat_id)
 
 
 async def vip_btn_print(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+
+    await track_event(q.message.chat_id, "clicou_botao_print")
+
     await _retry_send(
         lambda: context.bot.send_message(
             chat_id=q.message.chat_id,
@@ -708,6 +783,9 @@ async def vip_btn_print(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def vip_btn_depositar(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+
+    await track_event(q.message.chat_id, "clicou_botao_depositar")
+
     await _retry_send(
         lambda: context.bot.send_message(
             chat_id=q.message.chat_id,
@@ -721,6 +799,9 @@ async def vip_btn_depositar(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Recebe print
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    await track_event(chat_id, "enviou_foto_print")
+
     photo = update.message.photo[-1]
     f = await context.bot.get_file(photo.file_id)
     ba = await f.download_as_bytearray()
@@ -731,6 +812,9 @@ async def handle_image_doc(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
     if not doc or not (doc.mime_type or "").startswith("image/"):
         return
+
+    chat_id = update.effective_chat.id
+    await track_event(chat_id, "enviou_doc_imagem_print")
 
     f = await context.bot.get_file(doc.file_id)
     ba = await f.download_as_bytearray()
@@ -757,6 +841,8 @@ async def on_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     first = user.first_name or ""
+
+    await track_event(user_chat_id, "join_request_aprovado", {"group_id": req.chat.id})
 
     texto = (
         f"Falaaa {first}, tá por aí? 👋\n\n"
@@ -864,7 +950,7 @@ def main():
     app.add_error_handler(on_error)
 
     log.info(
-        "🤖 Bot unificado rodando: RequestToJoin + VIP + validação do print (OpenAI) + deep-link do presente."
+        "🤖 Bot unificado rodando: RequestToJoin + VIP + validação do print (OpenAI) + deep-link do presente + tracking no Sheets."
     )
 
     app.run_polling(drop_pending_updates=True)
