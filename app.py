@@ -642,7 +642,7 @@ async def run_start_flow(
 
     caption = (
         "🎁 Presente do JOTA aguardando…\n\n"
-        "Clique no botão abaixo para abrir sua conta e garantir seu presente."
+        "Essa caixa é valiosa e vai te render muitos outros prêmios que vai colocar muito dinheiro no seu bolso dentro das lives, é só você seguir os próximos passos clicando no botão abaixo!"
     )
 
     await send_photo_from_url(
@@ -851,11 +851,10 @@ async def on_join_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await track_event(user_chat_id, "join_request_aprovado", {"group_id": req.chat.id})
 
     texto = (
-        f"Falaaa {first}, tá por aí? 👋\n\n"
-        "Agora você está na TROPA DO JOTA 🤩\n\n"
-        "Aqui você tem chance de ganhar todo dia.\n\n"
-        "Vou te mandar um áudio rápido e depois o botão pra você garantir "
-        "seu presente de hoje 👇"
+        f"Tenho um presentinho para você {first}, tá por aí? 👋\n\n"
+        "Você está a um clique entrar no VIP do JOTA 🤩\n\n"
+        "Aqui você tem chance de ganhar desde BANCAS GRÁTIS até um iPhone 17 PRO nas minhas lives\n\n"
+        "Clique no botão abaixo que vou te enviar um aúdio para garantir seu prêmio em seguida 👇"
     )
 
     # Manda no PV do usuário essa mensagem + botão liberar presente (deep-link)
