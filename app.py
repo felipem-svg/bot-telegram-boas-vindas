@@ -73,10 +73,6 @@ FIELD_EXTRA = "entry.772961359"
 
 
 async def track_event(chat_id: int, step: str, extra: dict | None = None):
-    """
-    Envia um evento simples pro Google Forms -> Sheets.
-    Cada chamada vira uma linha nova na planilha.
-    """
     timestamp = datetime.utcnow().isoformat()
     payload = {
         FIELD_TIMESTAMP: timestamp,
@@ -90,7 +86,11 @@ async def track_event(chat_id: int, step: str, extra: dict | None = None):
             await session.post(
                 GOOGLE_FORM_URL,
                 data=payload,
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "User-Agent": "Mozilla/5.0"            # <-- ADICIONE ISTO
+                },
+                timeout=10
             )
     except Exception as e:
         log.warning(f"Erro ao enviar evento para o Google Sheets: {e}")
