@@ -700,7 +700,7 @@ async def send_followup_job(context: ContextTypes.DEFAULT_TYPE):
     await _retry_send(
         lambda: context.bot.send_message(
             chat_id=chat_id,
-            text="Eae, já conseguiu finalizar a criação da sua conta?",
+            text="E aí, você já conseguiu criar sua conta e resgatar os 10 giros que eu deixei pra você?",
             reply_markup=InlineKeyboardMarkup(
                 [[InlineKeyboardButton("✅ SIM", callback_data=CB_CONFIRM_SIM)]]
             ),
