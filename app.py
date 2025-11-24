@@ -106,7 +106,7 @@ async def track_event(chat_id: int, step: str, extra: dict | None = None):
 LINK_CADASTRO = (
     "https://click.betboom.com/BdnxJncs?landing=2833&sub_id1=Telegram"
 )
-LINK_COMUNIDADE_FINAL = "https://t.me/+rtq84bGVBhQyZmJh"
+LINK_COMUNIDADE_FINAL = "https://wa.me/5511959589591?text=Oi%2C%20tudo%20bem%3F%20Quero%20meu%20presente%20do%20Jota"
 IMG1_URL = "https://i.postimg.cc/wxkkz20M/presente-do-jota.jpg"
 IMG2_URL = "https://i.postimg.cc/8kbbG4tT/presente-do-jota-2.png"
 WHATSAPP_VIP_LINK = "https://chat.whatsapp.com/ENHzDrexZW57aF3xJ6jyv"
@@ -159,7 +159,7 @@ def btn_criar_conta() -> InlineKeyboardMarkup:
 def btn_comunidade_e_vip() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         [
-            [InlineKeyboardButton("🚀 Acessar comunidade", url=LINK_COMUNIDADE_FINAL)],
+            [InlineKeyboardButton("🚀 Receber Benefícios", url=LINK_COMUNIDADE_FINAL)],
             [InlineKeyboardButton("🟣 Acessar VIP", callback_data=CB_ACESSAR_VIP)],
         ]
     )
