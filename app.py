@@ -475,8 +475,6 @@ async def _vip_send_media_and_request(context, chat_id: int):
         var_name="FILE_ID_AUDIO_VIP",
     )
     await send_video_by_slot(context, chat_id, "video1")
-    await send_video_by_slot(context, chat_id, "video2")
-    await send_video_by_slot(context, chat_id, "video3")
 
     await track_event(chat_id, "vip_media_enviada")
 
