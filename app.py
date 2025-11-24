@@ -641,7 +641,7 @@ async def run_start_flow(
     await track_event(chat_id, "audio_inicial_enviado")
 
         # ⬇️ NOVO: vídeo logo depois da primeira imagem
-    await send_video_by_slot(context, chat_id, "video1")
+    await send_video_by_slot(context, chat_id, "video2")
     await track_event(chat_id, "video_pos_primeira_imagem_enviado")
 
     caption = (
