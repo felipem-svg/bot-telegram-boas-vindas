@@ -141,7 +141,7 @@ CB_VIP_EXPLICAR = "vip_explicar"
 CB_VIP_PRINT = "vip_print"
 CB_VIP_DEPOSITAR = "vip_depositar"
 
-WAIT_SECONDS = 60
+WAIT_SECONDS = 5 * 60
 VIP_WAIT_SECONDS = 7 * 60
 
 VIP_PENDING_PRINT: set[int] = set()  # chats aguardando print
