@@ -74,6 +74,7 @@ FIELD_EXTRA = "entry.772961359"
 
 async def track_event(chat_id: int, step: str, extra: dict | None = None):
     timestamp = datetime.utcnow().isoformat()
+
     payload = {
         FIELD_TIMESTAMP: timestamp,
         FIELD_CHAT_ID: str(chat_id),
@@ -83,17 +84,22 @@ async def track_event(chat_id: int, step: str, extra: dict | None = None):
 
     try:
         async with aiohttp.ClientSession() as session:
-            await session.post(
+            async with session.post(
                 GOOGLE_FORM_URL,
                 data=payload,
                 headers={
                     "Content-Type": "application/x-www-form-urlencoded",
-                    "User-Agent": "Mozilla/5.0"            # <-- ADICIONE ISTO
+                    "User-Agent": "Mozilla/5.0",
                 },
-                timeout=10
-            )
+                timeout=10,
+            ) as resp:
+                text = await resp.text()
+                log.info(f"[TRACK_EVENT] status={resp.status}")
+                if resp.status != 200:
+                    log.warning(f"[TRACK_EVENT] body (primeiros 300 chars): {text[:300]}")
     except Exception as e:
         log.warning(f"Erro ao enviar evento para o Google Sheets: {e}")
+
 
 
 # Links / mídias
